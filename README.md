@@ -17,8 +17,8 @@ mode in its EDID**, not from the mode you selected:
 
 | active pixel rate of the highest EDID mode | pipes reserved |
 |---|---|
-| up to ~1.27 Gpx/s (4K up to ~153 Hz, 5K up to ~86 Hz) | 1 |
-| above that (4K 160/200/240 Hz, 5K 120 Hz, 6K 60 Hz+) | 2 |
+| up to ~1.27 Gpx/s (4K up to ~153 Hz, 5K up to ~86 Hz, 6K 60 Hz) | 1 |
+| above that (4K 160/200/240 Hz, 5K 120 Hz, 8K 60 Hz) | 2 |
 
 4K 240 (2 pipes) + 4K 160 (2 pipes) = 4 pipes. The third monitor sits in
 `pending-dfps` forever. Apple's own numbers ("three displays up to 4K 144 Hz"
@@ -107,8 +107,8 @@ Logs go to `~/Library/Logs/pipecap.log`.
   not match the connected display.
 * Everything is reversible with `pipecap reset` or a reboot. Nothing is written
   to the monitor.
-* The override uses a private API. It works on macOS 14 through 26 today but
-  Apple may change it.
+* The override uses a private API (the same one BetterDisplay relies on). It
+  was verified on macOS 26.6; Apple may change or remove it in any release.
 
 ## How capping works
 
@@ -135,7 +135,7 @@ cargo run -- decode tests/fixtures/mon_4k240_hdmi.bin
 ```
 
 CI runs fmt, clippy, tests and a release build on macOS for every push; tags
-`v*` publish signed-off archives for `aarch64-apple-darwin` and
+`v*` publish archives with SHA-256 checksums for `aarch64-apple-darwin` and
 `x86_64-apple-darwin` (the Intel build compiles but there is no DCP to talk to).
 
 ## License

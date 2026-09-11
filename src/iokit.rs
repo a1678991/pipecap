@@ -297,7 +297,7 @@ pub fn external_displays() -> Result<Vec<Display>> {
         let pipe = path
             .split('/')
             .filter_map(|seg| seg.split(':').next())
-            .find(|s| s.starts_with("dispext") || s.starts_with("disp"))
+            .find(|s| s.starts_with("dispext"))
             .map(str::to_string);
         let (edid, status) = unsafe { read_edid(service.0) };
         let index = out.len();

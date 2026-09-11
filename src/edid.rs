@@ -265,17 +265,25 @@ fn vic_timing(vic: u8) -> Option<(u32, u32, u32, u32, u64)> {
         100 => (4096, 2160, 4400, 2250, 297_000_000),
         101 => (4096, 2160, 5280, 2250, 594_000_000),
         102 => (4096, 2160, 4400, 2250, 594_000_000),
-        117 => (3840, 2160, 5280, 2250, 1_188_000_000),
-        118 => (3840, 2160, 4400, 2250, 1_188_000_000),
+        103 => (3840, 2160, 5500, 2250, 297_000_000),
+        104 => (3840, 2160, 5280, 2250, 297_000_000),
+        105 => (3840, 2160, 4400, 2250, 297_000_000),
+        106 => (3840, 2160, 5280, 2250, 594_000_000),
+        107 => (3840, 2160, 4400, 2250, 594_000_000),
+        114 | 116 => (3840, 2160, 5500, 2250, 594_000_000),
+        115 => (4096, 2160, 5500, 2250, 594_000_000),
+        117 | 121 => (3840, 2160, 5280, 2250, 1_188_000_000),
+        118 | 122 => (3840, 2160, 4400, 2250, 1_188_000_000),
         119 => (4096, 2160, 5280, 2250, 1_188_000_000),
         120 => (4096, 2160, 4400, 2250, 1_188_000_000),
         194 | 202 => (7680, 4320, 11000, 4500, 1_188_000_000),
-        195 | 203 => (7680, 4320, 10800, 4500, 1_188_000_000),
-        196 | 204 => (7680, 4320, 9000, 4500, 1_188_000_000),
-        197 | 205 => (7680, 4320, 10560, 4500, 2_376_000_000),
-        198 | 206 => (7680, 4320, 9000, 4500, 2_376_000_000),
-        199 | 207 => (7680, 4320, 10560, 4500, 4_752_000_000),
-        200 | 208 => (7680, 4320, 9000, 4500, 4_752_000_000),
+        195 | 203 => (7680, 4320, 10800, 4400, 1_188_000_000),
+        196 | 204 => (7680, 4320, 9000, 4400, 1_188_000_000),
+        197 | 205 => (7680, 4320, 11000, 4500, 2_376_000_000),
+        198 | 206 => (7680, 4320, 10800, 4400, 2_376_000_000),
+        199 | 207 => (7680, 4320, 9000, 4400, 2_376_000_000),
+        200 | 208 => (7680, 4320, 10560, 4500, 4_752_000_000),
+        201 | 209 => (7680, 4320, 9000, 4400, 4_752_000_000),
         _ => return None,
     })
 }
@@ -365,9 +373,13 @@ fn build_cta(c: &CtaBlock) -> [u8; BLOCK] {
 }
 
 /// Size of one timing descriptor in a DisplayID Type I (0x03) / Type VII (0x22) block.
-fn displayid_entry_size(tag: u8, revision: u8) -> usize {
-    if tag == 0x22 && (revision & 0x07) >= 2 {
-        21
+///
+/// Type I descriptors are always 20 bytes. Type VII descriptors are 20 bytes
+/// plus the "payload bytes" count stored in bits 6..4 of the block revision
+/// byte (DisplayID 2.1), so a decoder must honour that field to stay aligned.
+fn displayid_entry_size(tag: u8, revision_byte: u8) -> usize {
+    if tag == 0x22 {
+        20 + ((revision_byte & 0x70) >> 4) as usize
     } else {
         20
     }
@@ -695,6 +707,28 @@ pub fn cap(bytes: &[u8], opts: &CapOptions) -> Result<CapResult, EdidError> {
                         }
                     }
                 }
+                // A Video Data Block with no VICs left (or an empty 4:2:0 block) is dropped
+                // entirely; a 4:2:0 capability map without a VDB is meaningless too.
+                let vdb_empty = cta
+                    .data_blocks
+                    .iter()
+                    .any(|(tag, body)| *tag == 2 && body.is_empty());
+                if vdb_empty {
+                    changed = true;
+                    cta.data_blocks.retain(|(tag, body)| {
+                        !(*tag == 2 && body.is_empty())
+                            && !(*tag == 7 && matches!(body.first(), Some(14) | Some(15)))
+                    });
+                    notes.push(format!("removed empty video data block(s) (block {block})"));
+                } else if cta
+                    .data_blocks
+                    .iter()
+                    .any(|(tag, body)| *tag == 7 && body.len() == 1 && body[0] == 14)
+                {
+                    changed = true;
+                    cta.data_blocks
+                        .retain(|(tag, body)| !(*tag == 7 && body.len() == 1 && body[0] == 14));
+                }
                 let before = cta.dtds.len();
                 let mut idx = 0;
                 cta.dtds.retain(|d| {
@@ -1017,6 +1051,96 @@ mod tests {
         assert!(matches!(validate(&bad), Err(EdidError::Checksum(1))));
         bad[0] = 1;
         assert!(matches!(validate(&bad), Err(EdidError::BadHeader)));
+    }
+
+    #[test]
+    fn vic_table_refresh_rates() {
+        for (vic, hz) in [
+            (1u8, 60u32),
+            (4, 60),
+            (16, 60),
+            (19, 50),
+            (31, 50),
+            (32, 24),
+            (33, 25),
+            (34, 30),
+            (60, 24),
+            (61, 25),
+            (62, 30),
+            (63, 120),
+            (64, 100),
+            (93, 24),
+            (94, 25),
+            (95, 30),
+            (96, 50),
+            (97, 60),
+            (114, 48),
+            (117, 100),
+            (118, 120),
+            (194, 24),
+            (195, 25),
+            (196, 30),
+            (197, 48),
+            (198, 50),
+            (199, 60),
+            (200, 100),
+            (201, 120),
+        ] {
+            let t = vic_as_timing(vic, 1).unwrap_or_else(|| panic!("VIC {vic} missing"));
+            assert_eq!(t.refresh_hz.round() as u32, hz, "VIC {vic}");
+        }
+        assert!(
+            vic_as_timing(5, 1).is_none(),
+            "interlaced VICs are not in the table"
+        );
+    }
+
+    #[test]
+    fn cap_below_every_vic_removes_the_video_data_block() {
+        // Give the 4K160 fixture a 3840x2160 @ 20 Hz preferred timing (198 MHz,
+        // htotal 4400, vtotal 2250) so that a 20 Hz cap keeps the preferred timing
+        // but removes every VIC, which must remove the Video Data Block itself.
+        let mut e = DP160.to_vec();
+        let dtd = [
+            0x58, 0x4d, 0x00, 0x30, 0xf2, 0x70, 0x5a, 0x80, 0xb0, 0x58, 0x8a, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x1e,
+        ];
+        e[54..72].copy_from_slice(&dtd);
+        fix_checksum(&mut e[..BLOCK]);
+        let r = cap(
+            &e,
+            &CapOptions {
+                max_hz: 20.0,
+                max_pixel_clock_mhz: None,
+            },
+        )
+        .unwrap();
+        validate(&r.bytes).unwrap();
+        let i = parse(&r.bytes).unwrap();
+        assert!(
+            i.timings.iter().all(|t| t.refresh_hz <= 20.5),
+            "{:?}",
+            i.timings
+        );
+        let cta = parse_cta(&r.bytes[128..256]);
+        assert!(
+            !cta.data_blocks.iter().any(|(tag, _)| *tag == 2),
+            "VDB should be gone"
+        );
+        assert!(r
+            .notes
+            .iter()
+            .any(|n| n.contains("removed empty video data block")));
+    }
+
+    #[test]
+    fn displayid_descriptor_sizes() {
+        assert_eq!(displayid_entry_size(0x03, 0x01), 20);
+        assert_eq!(displayid_entry_size(0x22, 0x00), 20);
+        assert_eq!(displayid_entry_size(0x22, 0x12), 21);
+        assert_eq!(displayid_entry_size(0x22, 0x72), 27);
+        assert_eq!(displayid_clock_unit(0x03), 10_000);
+        assert_eq!(displayid_clock_unit(0x22), 1_000);
     }
 
     #[test]
